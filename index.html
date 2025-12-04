@@ -1,0 +1,447 @@
+import React, { useState, useRef, useMemo } from 'react';
+import { Download, Shuffle, Plus, Trash2, Layers, EyeOff, Eye, Circle, Grip, Activity, Box, Monitor, Smartphone } from 'lucide-react';
+
+// --- Utility Functions ---
+
+const toRad = (deg) => (deg * Math.PI) / 180;
+
+// Calculate intersection points between two circles
+// Returns array of {x, y} objects (0, 1, or 2 points)
+const getCircleIntersections = (c1, c2) => {
+  // c1, c2 = { x, y, r }
+  const dx = c2.x - c1.x;
+  const dy = c2.y - c1.y;
+  const d = Math.sqrt(dx * dx + dy * dy);
+
+  // Circles are too far apart, or one is inside the other
+  if (d > c1.r + c2.r || d < Math.abs(c1.r - c2.r) || d === 0) {
+    return [];
+  }
+
+  // Distance from c1 to the midpoint of the chord connecting intersection points
+  const a = (c1.r * c1.r - c2.r * c2.r + d * d) / (2 * d);
+  
+  // Height from the chord midpoint to the intersection points
+  const h = Math.sqrt(Math.max(0, c1.r * c1.r - a * a));
+
+  // Midpoint coordinates (x2, y2)
+  const x2 = c1.x + a * (dx / d);
+  const y2 = c1.y + a * (dy / d);
+
+  // Intersection points
+  return [
+    {
+      x: x2 + h * (dy / d),
+      y: y2 - h * (dx / d)
+    },
+    {
+      x: x2 - h * (dy / d),
+      y: y2 + h * (dx / d)
+    }
+  ];
+};
+
+// --- Components ---
+
+const ControlGroup = ({ title, children, icon: Icon }) => (
+  <div className="mb-6 border-b border-gray-800 pb-4 last:border-0">
+    <div className="flex items-center space-x-2 mb-3 text-gray-500">
+      {Icon && <Icon size={14} />}
+      <h3 className="text-[10px] font-bold uppercase tracking-widest">{title}</h3>
+    </div>
+    <div className="space-y-3">
+      {children}
+    </div>
+  </div>
+);
+
+const Slider = ({ label, value, min, max, step, onChange }) => (
+  <div className="flex flex-col space-y-1">
+    <div className="flex justify-between text-[10px] text-gray-400 font-mono uppercase">
+      <span>{label}</span>
+      <span>{value.toFixed(1)}</span>
+    </div>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      onChange={(e) => onChange(parseFloat(e.target.value))}
+      className="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-white hover:accent-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-500"
+    />
+  </div>
+);
+
+const App = () => {
+  // --- State ---
+  const [size, setSize] = useState(800);
+  const [dotSize, setDotSize] = useState(3); 
+  const [viewTilt, setViewTilt] = useState(0); // 0 = Front, 90 = Side
+  
+  const [layers, setLayers] = useState([
+    // Layer 1: The central 4 rings
+    { 
+      id: 1, 
+      count: 4,         
+      radius: 120,      
+      scale: 180,       
+      rotation: 0, 
+      strokeWidth: 0.8, 
+      visible: true, 
+      opacity: 0.9 
+    },
+    // Layer 2: A larger outer ring
+    { 
+      id: 2, 
+      count: 4, 
+      radius: 120, 
+      scale: 180, 
+      rotation: 45, 
+      strokeWidth: 0.4, 
+      visible: true, 
+      opacity: 0.6 
+    },
+  ]);
+  const svgRef = useRef(null);
+
+  // --- Actions ---
+
+  const addLayer = () => {
+    const newLayer = {
+      id: Date.now(),
+      count: 6,
+      radius: 100,
+      scale: 100,
+      rotation: 0,
+      strokeWidth: 0.5,
+      visible: true,
+      opacity: 0.7
+    };
+    setLayers([...layers, newLayer]);
+  };
+
+  const removeLayer = (id) => {
+    setLayers(layers.filter(l => l.id !== id));
+  };
+
+  const updateLayer = (id, changes) => {
+    setLayers(layers.map(l => l.id === id ? { ...l, ...changes } : l));
+  };
+
+  const toggleLayerVisibility = (id) => {
+    const layer = layers.find(l => l.id === id);
+    updateLayer(id, { visible: !layer.visible });
+  };
+
+  const randomize = () => {
+    const baseSym = [3, 4, 6, 8, 12][Math.floor(Math.random() * 5)];
+    const numLayers = Math.floor(Math.random() * 2) + 2; 
+    const newLayers = [];
+    
+    for (let i = 0; i < numLayers; i++) {
+      const mult = [1, 1, 2, 0.5][Math.floor(Math.random() * 4)];
+      let count = Math.max(1, Math.round(baseSym * mult));
+      
+      const r = Math.random() * 200;
+      const s = Math.random() * 200 + 80;
+
+      newLayers.push({
+        id: Date.now() + i,
+        count: count,
+        radius: r,
+        scale: s,
+        rotation: i === 0 ? 0 : Math.random() * 45,
+        strokeWidth: Math.random() * 0.8 + 0.2, 
+        visible: true,
+        opacity: Math.random() * 0.5 + 0.5
+      });
+    }
+    setLayers(newLayers);
+  };
+
+  const toggleView = () => {
+    // Simple toggle between 0 (Front) and 90 (Lateral)
+    if (viewTilt < 45) {
+      setViewTilt(90);
+    } else {
+      setViewTilt(0);
+    }
+  };
+
+  const downloadSVG = () => {
+    if (!svgRef.current) return;
+    const svgData = new XMLSerializer().serializeToString(svgRef.current);
+    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orbital-intersections-${Date.now()}.svg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- Calculations ---
+
+  // 1. Collect all visible circles from all layers (Geometric Data - 2D)
+  const allCircles = useMemo(() => {
+    const circles = [];
+    layers.forEach(layer => {
+      if (!layer.visible) return;
+      for (let i = 0; i < layer.count; i++) {
+        const angleStep = 360 / layer.count;
+        const theta = toRad(angleStep * i + layer.rotation);
+        const cx = (size / 2) + layer.radius * Math.cos(theta);
+        const cy = (size / 2) + layer.radius * Math.sin(theta);
+        
+        circles.push({
+          x: cx,
+          y: cy,
+          r: layer.scale,
+          layerId: layer.id,
+          opacity: layer.opacity,
+          strokeWidth: layer.strokeWidth
+        });
+      }
+    });
+    return circles;
+  }, [layers, size]);
+
+  // 2. Calculate intersections between ALL circles (Geometric Data - 2D)
+  const intersectionPoints = useMemo(() => {
+    const points = [];
+    for (let i = 0; i < allCircles.length; i++) {
+      for (let j = i + 1; j < allCircles.length; j++) {
+        const c1 = allCircles[i];
+        const c2 = allCircles[j];
+        
+        const newPoints = getCircleIntersections(c1, c2);
+        
+        newPoints.forEach(p => {
+          points.push(p);
+        });
+      }
+    }
+    return points;
+  }, [allCircles]);
+
+  // 3. Projection Logic (View Data - 3D->2D)
+  // We rotate around the X-axis (center of screen height)
+  const project = (x, y) => {
+    const centerY = size / 2;
+    const relY = y - centerY;
+    
+    // Flatten Y based on tilt
+    // 0 deg = 1.0 scale (Full Height)
+    // 90 deg = 0.0 scale (Flat Line)
+    const scaleY = Math.cos(toRad(viewTilt));
+    
+    return {
+      x: x,
+      y: centerY + (relY * scaleY),
+      scaleY: scaleY // Return scale for ellipses
+    };
+  };
+
+  return (
+    <div className="flex flex-col md:flex-row h-screen bg-black text-gray-300 font-sans overflow-hidden">
+      
+      {/* Sidebar Controls */}
+      <div className="w-full md:w-80 flex flex-col bg-[#0a0a0a] border-r border-gray-800 z-10 h-1/2 md:h-full overflow-hidden">
+        
+        {/* Header */}
+        <div className="p-5 border-b border-gray-800 bg-[#0a0a0a]">
+          <div className="flex items-center justify-between mb-1">
+            <h1 className="text-lg font-light tracking-[0.2em] text-white uppercase">Orbital</h1>
+            <div className="flex space-x-1">
+               <button onClick={randomize} className="p-2 hover:bg-gray-800 rounded transition-colors group" title="Randomize Interference">
+                <Shuffle size={14} className="text-gray-400 group-hover:text-white"/>
+              </button>
+              <button onClick={downloadSVG} className="p-2 hover:bg-gray-800 rounded transition-colors" title="Export SVG">
+                <Download size={14} className="text-gray-400 hover:text-white" />
+              </button>
+            </div>
+          </div>
+          <p className="text-[9px] text-gray-600 font-mono uppercase tracking-widest">Intersection Engine</p>
+        </div>
+
+        {/* Scrollable Controls */}
+        <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+          
+          <ControlGroup title="View Perspective" icon={Box}>
+             <div className="flex items-center justify-between mb-4">
+               <button 
+                 onClick={toggleView}
+                 className="flex items-center space-x-2 text-[10px] uppercase font-bold bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded w-full justify-center transition-colors"
+               >
+                 {viewTilt < 45 ? <Monitor size={12}/> : <Activity size={12}/>}
+                 <span>{viewTilt < 45 ? "Front View" : "Lateral View"}</span>
+               </button>
+             </div>
+             <Slider 
+              label="Camera Tilt" 
+              value={viewTilt} 
+              min={0} max={90} step={1} 
+              onChange={setViewTilt} 
+            />
+             <Slider 
+              label="Intersection Dot Size" 
+              value={dotSize} 
+              min={0} max={10} step={0.5} 
+              onChange={setDotSize} 
+            />
+          </ControlGroup>
+
+          <div className="flex items-center justify-between mb-6 pb-2 border-b border-gray-800">
+            <div className="flex items-center space-x-2">
+              <Layers size={12} className="text-gray-500" />
+              <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Rings</h3>
+            </div>
+            <button 
+              onClick={addLayer}
+              className="flex items-center space-x-1 text-[10px] font-bold uppercase bg-white text-black px-3 py-1 rounded-sm hover:bg-gray-200 transition"
+            >
+              <Plus size={10} /> <span>Add</span>
+            </button>
+          </div>
+
+          <div className="space-y-8">
+            {layers.map((layer, index) => (
+              <div key={layer.id} className="relative group animate-in fade-in duration-300">
+                 {/* Layer Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-1 h-4 bg-gray-800 rounded-full"></span>
+                    <span className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Ring {index + 1}</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <button onClick={() => toggleLayerVisibility(layer.id)} className="p-1 text-gray-600 hover:text-white transition-colors">
+                      {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+                    </button>
+                    <button onClick={() => removeLayer(layer.id)} className="p-1 text-gray-600 hover:text-red-500 transition-colors">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Layer Controls */}
+                <div className={`space-y-4 pl-3 border-l border-gray-800 ml-1 ${!layer.visible && 'opacity-30 pointer-events-none'}`}>
+                  
+                  <Slider 
+                    label="Count (Clones)" 
+                    value={layer.count} 
+                    min={1} max={24} step={1} 
+                    onChange={(v) => updateLayer(layer.id, { count: v })} 
+                  />
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                     <Slider 
+                      label="Spread" 
+                      value={layer.radius} 
+                      min={0} max={400} step={1} 
+                      onChange={(v) => updateLayer(layer.id, { radius: v })} 
+                    />
+                    <Slider 
+                      label="Circle Size" 
+                      value={layer.scale} 
+                      min={10} max={400} step={1} 
+                      onChange={(v) => updateLayer(layer.id, { scale: v })} 
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <Slider 
+                      label="Opacity" 
+                      value={layer.opacity} 
+                      min={0.1} max={1} step={0.1} 
+                      onChange={(v) => updateLayer(layer.id, { opacity: v })} 
+                    />
+                     <Slider 
+                      label="Line Weight" 
+                      value={layer.strokeWidth} 
+                      min={0.1} max={5} step={0.1} 
+                      onChange={(v) => updateLayer(layer.id, { strokeWidth: v })} 
+                    />
+                  </div>
+                  
+                   <Slider 
+                      label="Rotation" 
+                      value={layer.rotation} 
+                      min={0} max={360} step={1} 
+                      onChange={(v) => updateLayer(layer.id, { rotation: v })} 
+                    />
+
+                </div>
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+
+      {/* Main Canvas Area */}
+      <div className="flex-1 bg-black relative flex items-center justify-center p-4 md:p-10 h-1/2 md:h-full overflow-hidden">
+        
+        {/* Canvas */}
+        <div className="relative shadow-2xl bg-black border border-gray-900" style={{ width: 'min(100%, 650px)', aspectRatio: '1/1' }}>
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${size} ${size}`}
+            className="w-full h-full"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            {/* Background for export */}
+            <rect width={size} height={size} fill="black" />
+            
+            {/* Render Circles Projected */}
+            {allCircles.map((c, i) => {
+              const proj = project(c.x, c.y);
+              return (
+                 <ellipse
+                    key={`c-${i}`}
+                    cx={proj.x}
+                    cy={proj.y}
+                    rx={c.r}
+                    ry={c.r * proj.scaleY} // Flatten Y radius based on tilt
+                    fill="none"
+                    stroke="white"
+                    strokeWidth={c.strokeWidth}
+                    opacity={c.opacity}
+                    vectorEffect="non-scaling-stroke" 
+                  />
+              );
+            })}
+
+            {/* Render Intersections Projected */}
+            {dotSize > 0 && intersectionPoints.map((p, i) => {
+              const proj = project(p.x, p.y);
+              return (
+                <circle 
+                  key={`p-${i}`}
+                  cx={proj.x}
+                  cy={proj.y}
+                  r={dotSize}
+                  fill="white"
+                  opacity={0.9}
+                />
+              );
+            })}
+            
+          </svg>
+        </div>
+        
+        <div className="absolute bottom-6 left-10 text-[10px] text-gray-600 uppercase tracking-widest pointer-events-none">
+          View Tilt: {viewTilt}°
+        </div>
+        <div className="absolute bottom-6 right-10 text-[10px] text-gray-600 uppercase tracking-widest pointer-events-none">
+          Intersections: {intersectionPoints.length}
+        </div>
+
+      </div>
+
+    </div>
+  );
+};
+
+export default App;
